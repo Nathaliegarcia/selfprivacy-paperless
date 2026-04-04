@@ -79,7 +79,7 @@ in
     ocr-languages = (lib.mkOption {
       type = lib.types.str;
       default = "eng" ;
-      description = "OCR language packs to install (e.g. [\"eng\" \"fra\" \"deu\"])";
+      description = "OCR language packs to install (e.g. \"eng+fra+deu\")";
     }) // {
       meta = {
         type = "string";
@@ -109,7 +109,7 @@ in
       inherit port;
       extraConfig = {
         PAPERLESS_URL = "https://${cfg.subdomain}.${sp.domain}";
-        PAPERLESS_OCR_LANGUAGE = lib.concatStringsSep "+" cfg.ocr-languages;
+        PAPERLESS_OCR_LANGUAGE = cfg.ocr-languages;
         PAPERLESS_ENABLE_HTTP_REMOTE_USER = false;
       } // lib.optionalAttrs hasAuth {
         PAPERLESS_APPS = "allauth.socialaccount.providers.openid_connect";
