@@ -1,13 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#17a2b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Document body -->
-  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="#e8f7fa" stroke="#17a2b8"/>
-  <!-- Folded corner -->
-  <polyline points="14 2 14 8 20 8" fill="none" stroke="#17a2b8"/>
-  <!-- Text lines -->
-  <line x1="8" y1="12" x2="16" y2="12"/>
-  <line x1="8" y1="15" x2="16" y2="15"/>
-  <line x1="8" y1="18" x2="12" y2="18"/>
-  <!-- Checkmark circle indicating processed/archived -->
-  <circle cx="17.5" cy="18.5" r="3" fill="#17a2b8" stroke="none"/>
-  <polyline points="16 18.5 17 19.5 19 17.5" stroke="white" stroke-width="1.5" fill="none"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 30 630 700" xml:space="preserve">
+  <!-- background -->
+  <rect x="-20" y="30" width="630" height="700" fill="#333333" rx="40"/>
+  <!-- leaf/plant mark — white -->
+  <path fill="#ffffff" d="M140 713.7c-3.4-16.4-10.3-49.1-11.2-49.1C-16.9 577.5.4 426.6 48.6 340.4 59 449 251.2 524 139.1 656.8c-.9 1.7 5.2 22.4 10.3 41.4 22.4-37.9 56-83.6 54.3-87.9C65.9 273.9 496.9 248.1 586.6 39.4c40.5 201.8-20.7 513.9-367.2 593.2-1.7.9-62.9 108.6-65.5 109.5 0-1.7-25.9-.9-22.4-9.5 1.6-5.2 5.1-12 8.5-18.9zm-4.3-81.1c44-50.9-7.8-137.9-38.8-166.4 52.6 90.5 49.1 143.1 38.8 166.4z"/>
 </svg>
