@@ -77,7 +77,7 @@ in
     };
 
     ocr-languages = (lib.mkOption {
-      type = lib.types.listOf lib.types.str;
+      type = lib.types.str;
       default = "eng" ;
       description = "OCR language packs to install (e.g. [\"eng\" \"fra\" \"deu\"])";
     }) // {
