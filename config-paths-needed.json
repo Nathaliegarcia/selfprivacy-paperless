@@ -1,0 +1,7 @@
+[
+  ["selfprivacy", "domain"],
+  ["selfprivacy", "useBinds"],
+  ["selfprivacy", "modules", "paperless"],
+  ["selfprivacy", "sso", "enable"],
+  ["selfprivacy", "passthru", "auth", "mkOAuth2ClientSecretFP"]
+]
