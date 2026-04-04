@@ -78,7 +78,7 @@ in
 
     ocr-languages = (lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ "eng" ];
+      default = "eng" ;
       description = "OCR language packs to install (e.g. [\"eng\" \"fra\" \"deu\"])";
     }) // {
       meta = {
