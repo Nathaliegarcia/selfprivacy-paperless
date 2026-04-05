@@ -26,8 +26,8 @@ let
       '{
         openid_connect: {
           APPS: [{
-            provider_id: "authelia",
-            name: "SelfPrivacy SSO",
+            provider_id: "kanidm",
+            name: "Kanidm",
             client_id: $client_id,
             secret: $secret,
             settings: { server_url: $issuer }
@@ -169,7 +169,7 @@ in
         displayName = "Paperless-ngx";
         subdomain = cfg.subdomain;
         isTokenNeeded = false;
-        originUrl = "https://${cfg.subdomain}.${sp.domain}/accounts/oidc/authelia/login/callback/";
+        originUrl = "https://${cfg.subdomain}.${sp.domain}/accounts/oidc/kanidm/login/callback/";
         originLanding = "https://${cfg.subdomain}.${sp.domain}";
         enablePkce = true;
         clientSystemdUnits = [ "paperless-web.service" ];
