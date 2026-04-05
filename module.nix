@@ -102,6 +102,12 @@ in
       options = [ "bind" ];
     };
 
+    # Ensure paperless subdirectories exist with correct ownership after bind mount
+    systemd.tmpfiles.rules = [
+      "d ${dataDir}     0750 paperless paperless -"
+      "d ${dataDir}/log 0750 paperless paperless -"
+    ];
+
     services.paperless = {
       enable = true;
       dataDir = dataDir;
