@@ -14,32 +14,7 @@ let
   adminsGroup = "sp.paperless.admins";
   usersGroup = "sp.paperless.users";
 
-  # Build OIDC provider JSON at runtime so the client secret is read from file
-  ssoSetupScript = pkgs.writeShellScript "paperless-sso-setup" ''
-    set -euo pipefail
-    mkdir -p /run/paperless
-    secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
-    ${pkgs.jq}/bin/jq -cn \
-      --arg secret "$secret" \
-      --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
-      --arg client_id "${oauthClientID}" \
-      '{
-        openid_connect: {
-          APPS: [{
-            provider_id: "kanidm",
-            name: "Kanidm",
-            client_id: $client_id,
-            secret: $secret,
-            settings: { server_url: $issuer }
-          }]
-        }
-      }' > /run/paperless/sso-env.json
-    printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' \
-      "$(cat /run/paperless/sso-env.json)" \
-      > /run/paperless/sso-env
-    chmod 600 /run/paperless/sso-env /run/paperless/sso-env.json
-    chown paperless:paperless /run/paperless/sso-env /run/paperless/sso-env.json
-  '';
+  ssoEnvFile = "/var/lib/paperless-sso-env";
 in
 {
   options.selfprivacy.modules.paperless = {
@@ -47,21 +22,13 @@ in
       type = lib.types.bool;
       default = false;
       description = "Enable Paperless-ngx";
-    }) // {
-      meta = {
-        type = "enable";
-      };
-    };
+    }) // { meta.type = "enable"; };
 
     location = (lib.mkOption {
       type = lib.types.str;
       description = "Data location";
       default = "/volumes/${config.selfprivacy.useBinds.defaultVolume or "sda1"}/paperless";
-    }) // {
-      meta = {
-        type = "location";
-      };
-    };
+    }) // { meta.type = "location"; };
 
     subdomain = (lib.mkOption {
       default = "paperless";
@@ -78,35 +45,22 @@ in
 
     ocr-languages = (lib.mkOption {
       type = lib.types.str;
-      default = "eng" ;
+      default = "eng";
       description = "OCR language packs to install (e.g. \"eng+fra+deu\")";
-    }) // {
-      meta = {
-        type = "string";
-        weight = 1;
-      };
-    };
+    }) // { meta = { type = "string"; weight = 1; }; };
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = [
-      {
-        assertion = sp.domain != null && sp.domain != "";
-        message = "selfprivacy.domain must be set for the Paperless module.";
-      }
-    ];
+    assertions = [{
+      assertion = sp.domain != null && sp.domain != "";
+      message = "selfprivacy.domain must be set for the Paperless module.";
+    }];
 
     fileSystems.${dataDir} = lib.mkIf (sp.useBinds or false) {
       device = cfg.location;
       fsType = "none";
       options = [ "bind" ];
     };
-
-    # Ensure paperless subdirectories exist with correct ownership after bind mount
-    systemd.tmpfiles.rules = [
-      "d ${dataDir}     0750 paperless paperless -"
-      "d ${dataDir}/log 0750 paperless paperless -"
-    ];
 
     services.paperless = {
       enable = true;
@@ -116,7 +70,6 @@ in
       extraConfig = {
         PAPERLESS_URL = "https://${cfg.subdomain}.${sp.domain}";
         PAPERLESS_OCR_LANGUAGE = cfg.ocr-languages;
-        PAPERLESS_ENABLE_HTTP_REMOTE_USER = false;
       } // lib.optionalAttrs hasAuth {
         PAPERLESS_APPS = "allauth.socialaccount.providers.openid_connect";
         PAPERLESS_REDIRECT_LOGIN_TO_SSO = "true";
@@ -124,32 +77,29 @@ in
       };
     };
 
-    # Oneshot service to build the SSO environment file from the OAuth2 secret
-    systemd.services.paperless-sso-setup = lib.mkIf hasAuth {
-      description = "Prepare Paperless-ngx SSO environment";
-      before = [ "paperless-web.service" ];
-      requiredBy = [ "paperless-web.service" ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        RuntimeDirectory = "paperless";
-        RuntimeDirectoryMode = "0750";
-        ExecStart = ssoSetupScript;
-      };
-    };
+    # Write the OIDC env file once at deploy time (nixos-rebuild switch),
+    # not on every boot. File persists across reboots at a stable path.
+    system.activationScripts.paperless-sso = lib.mkIf hasAuth (lib.stringAfter [ "users" ] ''
+      secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
+      printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
+        ${pkgs.jq}/bin/jq -cn \
+          --arg s "$secret" \
+          --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
+          '{"openid_connect":{"APPS":[{"provider_id":"kanidm","name":"Kanidm","client_id":"${oauthClientID}","secret":$s,"settings":{"server_url":$issuer}}]}}'
+      )" > ${ssoEnvFile}
+      chmod 600 ${ssoEnvFile}
+    '');
 
-    # Inject the generated env file containing PAPERLESS_SOCIALACCOUNT_PROVIDERS
+    # -prefix: don't fail if file absent on very first boot before activation ran
     systemd.services.paperless-web = lib.mkIf hasAuth {
-      serviceConfig.EnvironmentFiles = [ "/run/paperless/sso-env" ];
+      serviceConfig.EnvironmentFiles = [ "-${ssoEnvFile}" ];
     };
 
     services.nginx = {
       enable = true;
-
       virtualHosts."${cfg.subdomain}.${sp.domain}" = {
         useACMEHost = sp.domain;
         forceSSL = true;
-
         locations."/" = {
           proxyPass = "http://127.0.0.1:${toString port}";
           proxyWebsockets = true;
