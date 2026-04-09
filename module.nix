@@ -72,8 +72,11 @@ in
 
     system.activationScripts.paperless-setup = lib.stringAfter [ "users" ] (
       lib.optionalString sp.useBinds ''
-        mkdir -p /volumes/${lib.escapeShellArg cfg.location}/paperless
-        chown paperless:paperless /volumes/${lib.escapeShellArg cfg.location}/paperless
+        mkdir -p \
+          /volumes/${lib.escapeShellArg cfg.location}/paperless \
+          /volumes/${lib.escapeShellArg cfg.location}/paperless/consume \
+          /volumes/${lib.escapeShellArg cfg.location}/paperless/media
+        chown -R paperless:paperless /volumes/${lib.escapeShellArg cfg.location}/paperless
       ''
       + lib.optionalString hasAuth ''
         secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
