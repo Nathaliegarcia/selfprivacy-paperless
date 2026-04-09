@@ -26,8 +26,7 @@ in
 
     location = (lib.mkOption {
       type = lib.types.str;
-      description = "Data location";
-      default = "/volumes/${config.selfprivacy.useBinds.defaultVolume or "sda1"}/paperless";
+      description = "Volume for Paperless data";
     }) // { meta.type = "location"; };
 
     subdomain = (lib.mkOption {
@@ -56,11 +55,37 @@ in
       message = "selfprivacy.domain must be set for the Paperless module.";
     }];
 
-    fileSystems.${dataDir} = lib.mkIf (sp.useBinds or false) {
-      device = cfg.location;
-      fsType = "none";
-      options = [ "bind" ];
+    fileSystems.${dataDir} = lib.mkIf sp.useBinds {
+      device = "/volumes/${cfg.location}/paperless";
+      options = [
+        "bind"
+        "x-systemd.required-by=paperless-web.service"
+        "x-systemd.required-by=paperless-scheduler.service"
+        "x-systemd.required-by=paperless-task-queue.service"
+        "x-systemd.required-by=paperless-consumer.service"
+        "x-systemd.before=paperless-web.service"
+        "x-systemd.before=paperless-scheduler.service"
+        "x-systemd.before=paperless-task-queue.service"
+        "x-systemd.before=paperless-consumer.service"
+      ];
     };
+
+    system.activationScripts.paperless-setup = lib.stringAfter [ "users" ] (
+      lib.optionalString sp.useBinds ''
+        mkdir -p /volumes/${lib.escapeShellArg cfg.location}/paperless
+        chown paperless:paperless /volumes/${lib.escapeShellArg cfg.location}/paperless
+      ''
+      + lib.optionalString hasAuth ''
+        secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
+        printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
+          ${pkgs.jq}/bin/jq -cn \
+            --arg s "$secret" \
+            --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
+            '{"openid_connect":{"APPS":[{"provider_id":"kanidm","name":"Kanidm","client_id":"${oauthClientID}","secret":$s,"settings":{"server_url":$issuer}}]}}'
+        )" > ${ssoEnvFile}
+        chmod 600 ${ssoEnvFile}
+      ''
+    );
 
     services.paperless = {
       enable = true;
@@ -77,28 +102,6 @@ in
       };
     };
 
-    # Activation script runs once at deploy time (nixos-rebuild switch).
-    # - With bind mounts: chowns the volume source dir so paperless can write to it
-    #   (the mount target inherits ownership from the source)
-    # - With SSO: writes the OIDC env file to a persistent path
-    system.activationScripts.paperless-setup = lib.stringAfter [ "users" ] (
-      lib.optionalString (sp.useBinds or false) ''
-        mkdir -p ${lib.escapeShellArg cfg.location}
-        chown paperless:paperless ${lib.escapeShellArg cfg.location}
-      ''
-      + lib.optionalString hasAuth ''
-        secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
-        printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
-          ${pkgs.jq}/bin/jq -cn \
-            --arg s "$secret" \
-            --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
-            '{"openid_connect":{"APPS":[{"provider_id":"kanidm","name":"Kanidm","client_id":"${oauthClientID}","secret":$s,"settings":{"server_url":$issuer}}]}}'
-        )" > ${ssoEnvFile}
-        chmod 600 ${ssoEnvFile}
-      ''
-    );
-
-    # -prefix: don't fail if file absent on very first boot before activation ran
     systemd.services.paperless-web = lib.mkIf hasAuth {
       serviceConfig.EnvironmentFiles = [ "-${ssoEnvFile}" ];
     };
@@ -130,6 +133,8 @@ in
         originUrl = "https://${cfg.subdomain}.${sp.domain}/accounts/oidc/kanidm/login/callback/";
         originLanding = "https://${cfg.subdomain}.${sp.domain}";
         enablePkce = true;
+        linuxUserOfClient = "paperless";
+        linuxGroupOfClient = "paperless";
         clientSystemdUnits = [ "paperless-web.service" ];
       };
     };
