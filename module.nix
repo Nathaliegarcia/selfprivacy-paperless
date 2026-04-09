@@ -102,6 +102,8 @@ in
         PAPERLESS_APPS = "allauth.socialaccount.providers.openid_connect";
         PAPERLESS_REDIRECT_LOGIN_TO_SSO = "true";
         PAPERLESS_DISABLE_REGULAR_LOGIN = "true";
+        PAPERLESS_ACCOUNT_ALLOW_SIGNUPS = "false";
+        PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS = "true";
       };
     };
 
