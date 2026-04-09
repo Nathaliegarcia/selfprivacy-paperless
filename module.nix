@@ -13,6 +13,8 @@ let
   oauthClientID = "paperless";
   adminsGroup = "sp.paperless.admins";
   usersGroup = "sp.paperless.users";
+
+  ssoEnvFile = "/var/lib/paperless-sso-env";
 in
 {
   options.selfprivacy.modules.paperless = {
@@ -60,9 +62,6 @@ in
       options = [ "bind" ];
     };
 
-    # Logs outside the bind-mounted dataDir — avoids permission issues on the volume
-    systemd.tmpfiles.rules = [ "d /var/log/paperless 0750 paperless paperless -" ];
-
     services.paperless = {
       enable = true;
       dataDir = dataDir;
@@ -71,7 +70,6 @@ in
       extraConfig = {
         PAPERLESS_URL = "https://${cfg.subdomain}.${sp.domain}";
         PAPERLESS_OCR_LANGUAGE = cfg.ocr-languages;
-        PAPERLESS_LOGGING_DIR = "/var/log/paperless";
       } // lib.optionalAttrs hasAuth {
         PAPERLESS_APPS = "allauth.socialaccount.providers.openid_connect";
         PAPERLESS_REDIRECT_LOGIN_TO_SSO = "true";
@@ -79,31 +77,22 @@ in
       };
     };
 
-    # Build the OIDC provider env var at runtime so the client secret is never in the Nix store
-    systemd.services.paperless-sso-setup = lib.mkIf hasAuth {
-      description = "Prepare Paperless-ngx SSO environment";
-      before = [ "paperless-web.service" ];
-      requiredBy = [ "paperless-web.service" ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        RuntimeDirectory = "paperless";
-        RuntimeDirectoryMode = "0700";
-        ExecStart = pkgs.writeShellScript "paperless-sso-setup" ''
-          set -euo pipefail
-          secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
-          printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
-            ${pkgs.jq}/bin/jq -cn \
-              --arg s "$secret" \
-              --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
-              '{"openid_connect":{"APPS":[{"provider_id":"kanidm","name":"Kanidm","client_id":"${oauthClientID}","secret":$s,"settings":{"server_url":$issuer}}]}}'
-          )" > /run/paperless/sso-env
-        '';
-      };
-    };
+    # Write the OIDC env file once at deploy time (nixos-rebuild switch),
+    # not on every boot. File persists across reboots at a stable path.
+    system.activationScripts.paperless-sso = lib.mkIf hasAuth (lib.stringAfter [ "users" ] ''
+      secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
+      printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
+        ${pkgs.jq}/bin/jq -cn \
+          --arg s "$secret" \
+          --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
+          '{"openid_connect":{"APPS":[{"provider_id":"kanidm","name":"Kanidm","client_id":"${oauthClientID}","secret":$s,"settings":{"server_url":$issuer}}]}}'
+      )" > ${ssoEnvFile}
+      chmod 600 ${ssoEnvFile}
+    '');
 
+    # -prefix: don't fail if file absent on very first boot before activation ran
     systemd.services.paperless-web = lib.mkIf hasAuth {
-      serviceConfig.EnvironmentFiles = [ "/run/paperless/sso-env" ];
+      serviceConfig.EnvironmentFiles = [ "-${ssoEnvFile}" ];
     };
 
     services.nginx = {
