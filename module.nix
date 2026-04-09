@@ -13,33 +13,6 @@ let
   oauthClientID = "paperless";
   adminsGroup = "sp.paperless.admins";
   usersGroup = "sp.paperless.users";
-
-  # Build OIDC provider JSON at runtime so the client secret is read from file
-  ssoSetupScript = pkgs.writeShellScript "paperless-sso-setup" ''
-    set -euo pipefail
-    mkdir -p /run/paperless
-    secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
-    ${pkgs.jq}/bin/jq -cn \
-      --arg secret "$secret" \
-      --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
-      --arg client_id "${oauthClientID}" \
-      '{
-        openid_connect: {
-          APPS: [{
-            provider_id: "kanidm",
-            name: "Kanidm",
-            client_id: $client_id,
-            secret: $secret,
-            settings: { server_url: $issuer }
-          }]
-        }
-      }' > /run/paperless/sso-env.json
-    printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' \
-      "$(cat /run/paperless/sso-env.json)" \
-      > /run/paperless/sso-env
-    chmod 600 /run/paperless/sso-env /run/paperless/sso-env.json
-    chown paperless:paperless /run/paperless/sso-env /run/paperless/sso-env.json
-  '';
 in
 {
   options.selfprivacy.modules.paperless = {
@@ -47,21 +20,13 @@ in
       type = lib.types.bool;
       default = false;
       description = "Enable Paperless-ngx";
-    }) // {
-      meta = {
-        type = "enable";
-      };
-    };
+    }) // { meta.type = "enable"; };
 
     location = (lib.mkOption {
       type = lib.types.str;
       description = "Data location";
       default = "/volumes/${config.selfprivacy.useBinds.defaultVolume or "sda1"}/paperless";
-    }) // {
-      meta = {
-        type = "location";
-      };
-    };
+    }) // { meta.type = "location"; };
 
     subdomain = (lib.mkOption {
       default = "paperless";
@@ -78,23 +43,16 @@ in
 
     ocr-languages = (lib.mkOption {
       type = lib.types.str;
-      default = "eng" ;
+      default = "eng";
       description = "OCR language packs to install (e.g. \"eng+fra+deu\")";
-    }) // {
-      meta = {
-        type = "string";
-        weight = 1;
-      };
-    };
+    }) // { meta = { type = "string"; weight = 1; }; };
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = [
-      {
-        assertion = sp.domain != null && sp.domain != "";
-        message = "selfprivacy.domain must be set for the Paperless module.";
-      }
-    ];
+    assertions = [{
+      assertion = sp.domain != null && sp.domain != "";
+      message = "selfprivacy.domain must be set for the Paperless module.";
+    }];
 
     fileSystems.${dataDir} = lib.mkIf (sp.useBinds or false) {
       device = cfg.location;
@@ -102,33 +60,8 @@ in
       options = [ "bind" ];
     };
 
-    # Create required subdirectories after bind mounts are up (local-fs.target)
-    # tmpfiles runs too early and gets shadowed by bind mounts
-    systemd.services.paperless-dirs-setup = {
-      description = "Ensure Paperless data directories exist with correct permissions";
-      before = [
-        "paperless-web.service"
-        "paperless-scheduler.service"
-        "paperless-task-queue.service"
-        "paperless-consumer.service"
-      ];
-      requiredBy = [
-        "paperless-web.service"
-        "paperless-scheduler.service"
-        "paperless-task-queue.service"
-        "paperless-consumer.service"
-      ];
-      after = [ "local-fs.target" ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        ExecStart = pkgs.writeShellScript "paperless-dirs-setup" ''
-          set -euo pipefail
-          install -d -m 0750 -o paperless -g paperless ${dataDir}
-          install -d -m 0750 -o paperless -g paperless ${dataDir}/log
-        '';
-      };
-    };
+    # Logs outside the bind-mounted dataDir — avoids permission issues on the volume
+    systemd.tmpfiles.rules = [ "d /var/log/paperless 0750 paperless paperless -" ];
 
     services.paperless = {
       enable = true;
@@ -138,7 +71,7 @@ in
       extraConfig = {
         PAPERLESS_URL = "https://${cfg.subdomain}.${sp.domain}";
         PAPERLESS_OCR_LANGUAGE = cfg.ocr-languages;
-        PAPERLESS_ENABLE_HTTP_REMOTE_USER = false;
+        PAPERLESS_LOGGING_DIR = "/var/log/paperless";
       } // lib.optionalAttrs hasAuth {
         PAPERLESS_APPS = "allauth.socialaccount.providers.openid_connect";
         PAPERLESS_REDIRECT_LOGIN_TO_SSO = "true";
@@ -146,7 +79,7 @@ in
       };
     };
 
-    # Oneshot service to build the SSO environment file from the OAuth2 secret
+    # Build the OIDC provider env var at runtime so the client secret is never in the Nix store
     systemd.services.paperless-sso-setup = lib.mkIf hasAuth {
       description = "Prepare Paperless-ngx SSO environment";
       before = [ "paperless-web.service" ];
@@ -155,23 +88,29 @@ in
         Type = "oneshot";
         RemainAfterExit = true;
         RuntimeDirectory = "paperless";
-        RuntimeDirectoryMode = "0750";
-        ExecStart = ssoSetupScript;
+        RuntimeDirectoryMode = "0700";
+        ExecStart = pkgs.writeShellScript "paperless-sso-setup" ''
+          set -euo pipefail
+          secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
+          printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
+            ${pkgs.jq}/bin/jq -cn \
+              --arg s "$secret" \
+              --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
+              '{"openid_connect":{"APPS":[{"provider_id":"kanidm","name":"Kanidm","client_id":"${oauthClientID}","secret":$s,"settings":{"server_url":$issuer}}]}}'
+          )" > /run/paperless/sso-env
+        '';
       };
     };
 
-    # Inject the generated env file containing PAPERLESS_SOCIALACCOUNT_PROVIDERS
     systemd.services.paperless-web = lib.mkIf hasAuth {
       serviceConfig.EnvironmentFiles = [ "/run/paperless/sso-env" ];
     };
 
     services.nginx = {
       enable = true;
-
       virtualHosts."${cfg.subdomain}.${sp.domain}" = {
         useACMEHost = sp.domain;
         forceSSL = true;
-
         locations."/" = {
           proxyPass = "http://127.0.0.1:${toString port}";
           proxyWebsockets = true;
