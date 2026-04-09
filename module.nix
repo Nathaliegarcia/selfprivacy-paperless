@@ -67,7 +67,7 @@ in
       dataDir = dataDir;
       address = "127.0.0.1";
       inherit port;
-      extraConfig = {
+      settings = {
         PAPERLESS_URL = "https://${cfg.subdomain}.${sp.domain}";
         PAPERLESS_OCR_LANGUAGE = cfg.ocr-languages;
       } // lib.optionalAttrs hasAuth {
@@ -77,18 +77,26 @@ in
       };
     };
 
-    # Write the OIDC env file once at deploy time (nixos-rebuild switch),
-    # not on every boot. File persists across reboots at a stable path.
-    system.activationScripts.paperless-sso = lib.mkIf hasAuth (lib.stringAfter [ "users" ] ''
-      secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
-      printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
-        ${pkgs.jq}/bin/jq -cn \
-          --arg s "$secret" \
-          --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
-          '{"openid_connect":{"APPS":[{"provider_id":"kanidm","name":"Kanidm","client_id":"${oauthClientID}","secret":$s,"settings":{"server_url":$issuer}}]}}'
-      )" > ${ssoEnvFile}
-      chmod 600 ${ssoEnvFile}
-    '');
+    # Activation script runs once at deploy time (nixos-rebuild switch).
+    # - With bind mounts: chowns the volume source dir so paperless can write to it
+    #   (the mount target inherits ownership from the source)
+    # - With SSO: writes the OIDC env file to a persistent path
+    system.activationScripts.paperless-setup = lib.stringAfter [ "users" ] (
+      lib.optionalString (sp.useBinds or false) ''
+        mkdir -p ${lib.escapeShellArg cfg.location}
+        chown paperless:paperless ${lib.escapeShellArg cfg.location}
+      ''
+      + lib.optionalString hasAuth ''
+        secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
+        printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
+          ${pkgs.jq}/bin/jq -cn \
+            --arg s "$secret" \
+            --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
+            '{"openid_connect":{"APPS":[{"provider_id":"kanidm","name":"Kanidm","client_id":"${oauthClientID}","secret":$s,"settings":{"server_url":$issuer}}]}}'
+        )" > ${ssoEnvFile}
+        chmod 600 ${ssoEnvFile}
+      ''
+    );
 
     # -prefix: don't fail if file absent on very first boot before activation ran
     systemd.services.paperless-web = lib.mkIf hasAuth {
