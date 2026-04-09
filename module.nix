@@ -102,11 +102,33 @@ in
       options = [ "bind" ];
     };
 
-    # Ensure paperless subdirectories exist with correct ownership after bind mount
-    systemd.tmpfiles.rules = [
-      "d ${dataDir}     0750 paperless paperless -"
-      "d ${dataDir}/log 0750 paperless paperless -"
-    ];
+    # Create required subdirectories after bind mounts are up (local-fs.target)
+    # tmpfiles runs too early and gets shadowed by bind mounts
+    systemd.services.paperless-dirs-setup = {
+      description = "Ensure Paperless data directories exist with correct permissions";
+      before = [
+        "paperless-web.service"
+        "paperless-scheduler.service"
+        "paperless-task-queue.service"
+        "paperless-consumer.service"
+      ];
+      requiredBy = [
+        "paperless-web.service"
+        "paperless-scheduler.service"
+        "paperless-task-queue.service"
+        "paperless-consumer.service"
+      ];
+      after = [ "local-fs.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = pkgs.writeShellScript "paperless-dirs-setup" ''
+          set -euo pipefail
+          install -d -m 0750 -o paperless -g paperless ${dataDir}
+          install -d -m 0750 -o paperless -g paperless ${dataDir}/log
+        '';
+      };
+    };
 
     services.paperless = {
       enable = true;
