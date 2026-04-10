@@ -70,25 +70,40 @@ in
       ];
     };
 
-    system.activationScripts.paperless-setup = lib.stringAfter [ "users" ] (
-      lib.optionalString sp.useBinds ''
+    # Volume directory setup: runs at deploy time, before services start
+    system.activationScripts.paperless-setup = lib.mkIf sp.useBinds (
+      lib.stringAfter [ "users" ] ''
         mkdir -p \
           /volumes/${lib.escapeShellArg cfg.location}/paperless \
           /volumes/${lib.escapeShellArg cfg.location}/paperless/consume \
           /volumes/${lib.escapeShellArg cfg.location}/paperless/media
         chown -R paperless:paperless /volumes/${lib.escapeShellArg cfg.location}/paperless
       ''
-      + lib.optionalString hasAuth ''
-        secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
-        printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
-          ${pkgs.jq}/bin/jq -cn \
-            --arg s "$secret" \
-            --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
-            '{"openid_connect":{"APPS":[{"provider_id":"kanidm","name":"Kanidm","client_id":"${oauthClientID}","secret":$s,"settings":{"server_url":$issuer}}]}}'
-        )" > ${ssoEnvFile}
-        chmod 600 ${ssoEnvFile}
-      ''
     );
+
+    # SSO env file: must run after kanidm.service so the OAuth2 secret exists.
+    # RemainAfterExit=true means it runs once per boot, not on every paperless-web restart.
+    systemd.services.paperless-sso-env = lib.mkIf hasAuth {
+      description = "Generate Paperless SSO environment file";
+      before = [ "paperless-web.service" ];
+      requiredBy = [ "paperless-web.service" ];
+      after = [ "kanidm.service" ];
+      wants = [ "kanidm.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = pkgs.writeShellScript "paperless-sso-env" ''
+          set -euo pipefail
+          secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
+          printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
+            ${pkgs.jq}/bin/jq -cn \
+              --arg s "$secret" \
+              --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
+              '{"openid_connect":{"APPS":[{"provider_id":"kanidm","name":"Kanidm","client_id":"${oauthClientID}","secret":$s,"settings":{"server_url":$issuer}}]}}'
+          )" > ${ssoEnvFile}
+          chmod 600 ${ssoEnvFile}
+        '';
+      };
+    };
 
     services.paperless = {
       enable = true;
