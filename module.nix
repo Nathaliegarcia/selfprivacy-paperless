@@ -94,7 +94,7 @@ in
         ExecStart = pkgs.writeShellScript "paperless-sso-env" ''
           set -euo pipefail
           secret=$(cat ${lib.escapeShellArg (auth-passthru.mkOAuth2ClientSecretFP oauthClientID)})
-          printf 'PAPERLESS_SOCIALACCOUNT_PROVIDERS=%s\n' "$(
+          printf "PAPERLESS_SOCIALACCOUNT_PROVIDERS='%s'\n" "$(
             ${pkgs.jq}/bin/jq -cn \
               --arg s "$secret" \
               --arg issuer "https://auth.${sp.domain}/oauth2/openid/${oauthClientID}" \
@@ -123,7 +123,7 @@ in
     };
 
     systemd.services.paperless-web = lib.mkIf hasAuth {
-      serviceConfig.EnvironmentFiles = [ "-${ssoEnvFile}" ];
+      serviceConfig.EnvironmentFile = [ "-${ssoEnvFile}" ];
     };
 
     services.nginx = {
